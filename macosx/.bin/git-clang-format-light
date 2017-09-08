@@ -1,0 +1,5 @@
+#!/bin/sh
+ROOT_DIR=$(git rev-parse --show-toplevel)
+pushd "$ROOT_DIR" >/dev/null
+git diff --cached --name-only --diff-filter=ACMRT | grep -E "\.(cpp|h)$" | xargs -t -n 1 clang-format -style=file -i
+popd >/dev/null

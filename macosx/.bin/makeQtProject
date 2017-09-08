@@ -1,0 +1,214 @@
+#!/usr/bin/python
+
+import os
+import argparse
+import stat
+
+isVerbose = False
+
+creator_content = """[General]
+"""
+
+config_content = """// Add predefined macros for your project here. For example:
+// #define THE_ANSWER 42
+"""
+
+gitignore_content = """
+# Qt Creator IDE
+*.creator.user
+{0}.creator
+{0}.config
+{0}.files
+{0}.includes
+qtc-build.sh
+"""
+
+build_script_content = """#!/bin/bash
+
+(./build.sh) | tee >(grep "\\berror\\b" >&2)
+"""
+
+def list_include_directories(projectInfo, includesFile):
+    root = projectInfo['rootPath']
+    src = os.path.relpath(projectInfo['srcPath'], root)
+    youi = os.path.relpath(projectInfo['youiIncludePath'], root)
+    youiThirdParty = os.path.relpath(projectInfo['youiThirdParty'], root)
+    appCommon = os.path.relpath(projectInfo['youiAppCommonPath'], root)
+    
+    includesFile.write(src + '\n')
+    if ('distIncludePath' in projectInfo):
+        includesFile.write(os.path.relpath(projectInfo['distIncludePath'], root) + '\n')    
+    includesFile.write(youi + '\n')
+    includesFile.write(appCommon + '\n')
+    includesFile.write(youiThirdParty + '\n')
+    if ('prebuiltIncludePath' in projectInfo):
+        for dirname in next(os.walk(projectInfo['prebuiltIncludePath']))[1]:
+            includesFile.write(os.path.relpath(os.path.join(projectInfo['prebuiltIncludePath'], dirname), root) + '\n')
+    
+def list_src_files(projectInfo, filesFile):
+    root = projectInfo['rootPath']
+    
+    def walkSourceDir(dirName):
+        if isVerbose:
+            print('Walking through {0}/...'.format(dirName))
+        for (dirpath, dirnames, filenames) in os.walk(dirName):
+            for filename in filenames:
+                if (filename[0] != '.'):
+                    filesFile.write(os.path.relpath(os.path.join(dirpath, filename), root) + '\n')
+    
+    walkSourceDir(projectInfo['srcPath'])
+    if ('distIncludePath' in projectInfo):
+        walkSourceDir(projectInfo['distIncludePath'])
+        
+    if ('testSrcPath' in projectInfo):
+        walkSourceDir(projectInfo['testSrcPath'])
+    
+    if ('unitTestSrcPath' in projectInfo):
+        walkSourceDir(projectInfo['unitTestSrcPath'])
+        
+def setup_build_script(projectInfo):
+    root = projectInfo['rootPath']
+    
+    def makeScriptInSubFolder(subPath):
+        buildDir = os.path.join(root, subPath)
+        if os.path.isdir(buildDir):
+            filename = os.path.join(buildDir, 'qtc-build.sh')
+            if isVerbose:
+                print('Placing build script in {0}'.format(buildDir))
+            scriptFile = open(filename, 'w')
+            scriptFile.write(build_script_content)
+            scriptFile.close()
+            st = os.stat(filename)
+            os.chmod(filename, st.st_mode | stat.S_IEXEC)
+            
+    makeScriptInSubFolder('build/ios')
+    makeScriptInSubFolder('build/osx')
+    makeScriptInSubFolder('test/build/ios')
+    makeScriptInSubFolder('test/build/osx')
+    makeScriptInSubFolder('test/UnitTest/build/osx')
+        
+def setup_gitignore(projectInfo):
+    name = projectInfo['name']
+    root = projectInfo['rootPath']
+    gitignoreFilename = os.path.join(root, '.gitignore')
+    
+    if not os.path.isfile(gitignoreFilename):
+        if isVerbose:
+            print('No .gitignore to update')
+        return
+    
+    gitignoreContent = gitignore_content.format(name)
+    
+    gitignoreFile = open(os.path.join(root, '.gitignore'), 'a+')
+    gitignoreFile.seek(0, os.SEEK_SET)
+    
+    alreadyHasIgnore = False
+    for line in gitignoreFile.readlines():
+        if line == '# Qt Creator IDE\n':
+            alreadyHasIgnore = True
+            if isVerbose:
+                print('.gitignore file already contains Qt Creator section')
+            break
+    
+    if not alreadyHasIgnore:
+        gitignoreFile.seek(0, os.SEEK_END)
+        gitignoreFile.write(gitignoreContent)
+        if isVerbose:
+            print('Added Qt Creator section to .gitignore')
+    
+    gitignoreFile.close()
+
+def create_qt_creator_project(projectInfo):
+    projectName = projectInfo['name']
+    projectPath = projectInfo['rootPath']
+    
+    creatorFile = open(os.path.join(projectPath, '{0}.creator'.format(projectName)), 'w')
+    creatorFile.write(creator_content)
+    creatorFile.close()
+    
+    configFile = open(os.path.join(projectPath, '{0}.config'.format(projectName)), 'w')
+    configFile.write(config_content)
+    configFile.close()
+    
+    includesFile = open(os.path.join(projectPath, '{0}.includes'.format(projectName)), 'w')
+    list_include_directories(projectInfo, includesFile)
+    includesFile.close()
+    
+    filesFile = open(os.path.join(projectPath, '{0}.files'.format(projectName)), 'w')
+    list_src_files(projectInfo, filesFile)
+    filesFile.close()
+
+def main():
+    parser = argparse.ArgumentParser(description='Create a Qt Project configuration out of a standard Youi project structure.',
+                                     epilog='Author: maxime.bouchard@youi.tv')
+    parser.add_argument('--version', action='version', version='%(prog)s 0.1')
+    parser.add_argument('-v', '--verbose', action='store_true', help='print verbose log')
+    parser.add_argument('-y', '--youiengine', metavar='path', default='../youiengine', help='path to the YouiEngine SDK')
+    parser.add_argument('-p', '--projectroot', metavar='path', default=os.getcwd(), help='path to the project\'s root')
+    
+    args = parser.parse_args()
+    global isVerbose
+    isVerbose = args.verbose
+    
+    youiPath = os.path.abspath(os.path.expandvars(os.path.expanduser(args.youiengine)))
+    youiIncludePath = os.path.join(youiPath, 'core/dist/include')
+    youiThirdParty = os.path.join(youiPath, 'thirdparty/prebuilt/ios/include')
+    youiAppCommonPath = os.path.join(youiPath, 'AppCommon')
+    rootPath = os.path.abspath(os.path.expandvars(os.path.expanduser(args.projectroot)))
+    srcPath = os.path.join(rootPath, 'src')
+    projectInfo = {'youiPath': youiPath, 'youiIncludePath': youiIncludePath, 'youiThirdParty': youiThirdParty, 'youiAppCommonPath': youiAppCommonPath, 'rootPath': rootPath, 'srcPath': srcPath}
+    projectInfo['name'] = os.path.basename(rootPath)
+    
+    if (not os.path.isdir(youiPath)):
+        raise SystemExit('Invalid YouiEngine path {0}'.format(youiPath))
+    
+    if (not os.path.isdir(youiIncludePath)):
+        raise SystemExit('Could not find YouiEngine includes at {0}'.format(youiIncludePath))
+    
+    if (not os.path.isdir(rootPath)):
+        raise SystemExit('Invalid project path {0}'.format(rootPath))
+    
+    if (not os.path.isdir(srcPath)):
+        raise SystemExit('Could not find source directory at {0}'.format(srcPath))
+    
+    distIncludePath = os.path.join(rootPath, 'dist/include')
+    hasDistInclude = os.path.isdir(distIncludePath)
+    
+    testSrcPath = os.path.join(rootPath, 'test/src')
+    hasTestSrc = os.path.isdir(testSrcPath)
+    
+    unitTestSrcPath = os.path.join(rootPath, 'test/UnitTest/src')
+    hasUnitTestSrc = os.path.isdir(unitTestSrcPath)
+    
+    prebuiltIncludePath = os.path.join(rootPath, 'prebuilt/include')
+    hasPrebuiltInclude = os.path.isdir(prebuiltIncludePath)
+    
+    if (hasDistInclude):
+        projectInfo['distIncludePath'] = distIncludePath
+        
+    if (hasTestSrc):
+        projectInfo['testSrcPath'] = testSrcPath
+        
+    if (hasUnitTestSrc):
+        projectInfo['unitTestSrcPath'] = unitTestSrcPath
+        
+    if (hasPrebuiltInclude):
+        projectInfo['prebuiltIncludePath'] = prebuiltIncludePath
+    
+    if (args.verbose):
+        print('Project "{0}":'.format(projectInfo['name']))
+        print('- YouiEngine path: {0}'.format(youiPath))
+        print('- Project root: {0}'.format(rootPath))
+        print('- Source path: {0}'.format(srcPath))
+        if (hasDistInclude): print('- Dist includes path: {0}'.format(distIncludePath))
+        if (hasTestSrc): print('- Test src path: {0}'.format(testSrcPath))
+        if (hasUnitTestSrc): print('- UnitTest src path: {0}'.format(unitTestSrcPath))
+        if (hasPrebuiltInclude): print('- Prebuilt includes path: {0}'.format(prebuiltIncludePath))
+        
+    create_qt_creator_project(projectInfo)
+    setup_build_script(projectInfo)
+    setup_gitignore(projectInfo)
+    
+    
+if __name__ == '__main__':
+    main()
