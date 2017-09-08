@@ -1,0 +1,19 @@
+# Create a new user and add it to sudoers
+> adduser [username]
+> usermod -aG sudo [username]
+
+# Restrict SSH pasword login in sshd_config
+` Match all
+` PasswordAuthentication no
+` Match User root
+` PasswordAuthentication yes
+
+# Add public ssh key to ~/.ssh/authorized_keys
+# restrict permission on the file
+> chmod 600 authorized_keys
+
+# Restart ssh
+> service ssh restart
+
+# Prevent root login with password
+> usermod -L root
